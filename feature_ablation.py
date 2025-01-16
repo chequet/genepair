@@ -27,23 +27,18 @@ def single_gene_ablation(data, model, gene_keys, ordered_feature_masks):
     # persist diffs dict
     return diffs_dict
 
-def get_unsigned_means(diffs_dict, means_dict_path):
+def get_unsigned_means(diffs_dict):
     unsigned_means_dict = {}
     for key in diffs_dict.keys():
         unsigned_means_dict[key] = np.mean(np.absolute(diffs_dict[key]))
-    pickle.dump(unsigned_means_dict, open(means_dict_path, "wb"))
     return unsigned_means_dict
 
 def one_gene_pairwise(data, ordered_feature_masks, start_gene, gene_set,
-                      diffs_dict, model, dict_directory, device, lin_mod=False):
+                      diffs_dict, model, save_path=None):
     # perturb given gene with comparison set and store perturbation results
     # comparison_set should be list of strings
     # data should be pre-filtered for phenotype category (if desired) and MSE
     pairs_dict = {}
-    if not lin_mod:
-        dict_path = dict_directory + start_gene + "_pairs_dict.pkl"
-    else:
-        dict_path = dict_directory + "LIN_" + start_gene + "_pairs_dict.pkl"
     gene_mask = ordered_feature_masks[start_gene]
     g = 1
     for gene in gene_set:
@@ -55,60 +50,32 @@ def one_gene_pairwise(data, ordered_feature_masks, start_gene, gene_set,
         c = 0
         for i in range(len(data)):
             linear_diff = diffs_dict[start_gene][c] + diffs_dict[gene][c]
-            if lin_mod:
-                og_inp = data[i].reshape(1, -1)
-                og_pheno = model.predict(og_inp)
-                new_inp = (og_inp * joint_mask).reshape(1, -1)
-                new_pheno = model.predict(new_inp)
-                pair_diff = (og_pheno - new_pheno)
-            else:
-                og_inp = data[i].to(device)
-                og_pheno = model(og_inp.float())
-                new_inp = og_inp * joint_mask
-                new_pheno = model(new_inp.float())
-                pair_diff = (og_pheno - new_pheno).detach().cpu().numpy()
+            og_inp = data[i].to(device)
+            og_pheno = model(og_inp.float())
+            new_inp = og_inp * joint_mask
+            new_pheno = model(new_inp.float())
+            pair_diff = (og_pheno - new_pheno).detach().cpu().numpy()
             diff_diffs.append(pair_diff - linear_diff)
             c += 1
         pairs_dict[key] = np.mean(np.absolute(diff_diffs))
         g += 1
-    print("writing pairs dict for %s to %s..." % (start_gene, dict_path))
-    pickle.dump(pairs_dict, open(dict_path, "wb"))
-
-def one_gene_parallel_pairwise(data, ordered_feature_masks, start_gene, gene_set,
-                      diffs_dict, model, dict_directory, n_cpus, device, lin_mod=False):
-    # divide gene set up into n_cpus batches
-    miniset_size = int(math.ceil(len(gene_set)/n_cpus))
-    print("miniset size: %i"%miniset_size)
-    minisets = []
-    for i in range(0,len(gene_set),miniset_size):
-        minisets.append(gene_set[i:i+miniset_size])
-    procs = []
-    for miniset in minisets:
-        proc=Process(target=one_gene_pairwise, args=(data, ordered_feature_masks, start_gene, miniset,
-                      diffs_dict, model, dict_directory, device, lin_mod,))
-        procs.append(proc)
-        proc.start()
-    for proc in procs:
-        proc.join()
+        if save_path:
+            pickle.dump(pairs_dict, open(os.path.join(save_path,gene,"_pairs.pkl"), "wb"))
+    return pairs_dict
 
 def pairwise_ablation(data, ordered_feature_masks, gene_set,
-                      diffs_dict, stop_gene, model, dict_directory, device, lin_mod=False, parallel=False):
+                      diffs_dict, model, save_path=None):
     # exhaustive search of comparison set
+    pairs_dicts = []
     searched_genes = set()
     for start_gene in gene_set:
         print(start_gene)
-        if start_gene == stop_gene:
-            print("reached stop gene: %s"%stop_gene)
-            return True
         searched_genes.add(start_gene)
         comparison_set = [g for g in gene_set if g not in searched_genes]
-        if parallel:
-            one_gene_parallel_pairwise(data, ordered_feature_masks, start_gene, comparison_set, diffs_dict,
-                              model, dict_directory, N_CPUs, device, lin_mod)
-        else:
-            one_gene_pairwise(data, ordered_feature_masks, start_gene, comparison_set, diffs_dict,
-                          model, dict_directory, device, lin_mod)
-    return True
+        pd = one_gene_pairwise(data, ordered_feature_masks, start_gene, comparison_set, diffs_dict,
+                          model, save_path)
+        pairs_dicts.append(pd)
+    return pairs_dicts
 
 def check_overlap(gene1, gene2, gene_feature_masks):
     # check if two genes have SNPs in common
@@ -129,23 +96,32 @@ def check_second_degree_overlap(gene1, gene2, gene_feature_masks, comparison_set
             return True, gene3
     return False, None
 
-def main(ordered_feature_masks_file, model_file):
+def add_other_dict_keys(search_gene, dict_directory):
+    files = os.listdir(dict_directory)
+    og_path = dict_directory + search_gene + "_pairs_dict.pkl"
+    og_dict = pickle.load(open(og_path, "rb"))
+    for f in files:
+        key = f.split("_")[0] + "_" + search_gene
+        dict = pickle.load(open(dict_directory + f, "rb"))
+        if key in dict.keys():
+            new_key = search_gene + "_" + key.split("_")[0]
+            og_dict[new_key] = dict[key]
+
+def main(ordered_feature_masks_file, model_file, test_data_path, pairs_directory):
     ordered_feature_masks = pickle.load(open(ordered_feature_masks_file,"rb"))
     model = torch.load(model_file)
     model.to(device)
     print(model)
-    test_samples = np.load('data/X_tst.npy')
-    gene_keys = list(ordered_feature_masks.keys())
-    # filter for BMI category, MSE
-    diffs_dict = pickle.load(open("../diffs_dicts/obese12diffs.pkl","rb"))
-    unsigned_means_dict = get_unsigned_means(diffs_dict, "../diffs_dicts/obese12means.pkl")
-    # sorted_unsigned_lin = sorted(lin_means.items(), key=lambda x: x[1], reverse=True)
-    sorted_unsigned = sorted(unsigned_means_dict.items(), key=lambda x:x[1], reverse=True)
-    # exhaustive search!
-    print("beginning pairwise ablation...")
-    genes = [tup[0] for tup in sorted_unsigned]
-    pairwise_ablation(X_data, ordered_feature_masks, genes, diffs_dict, stop_gene, model,
-                      "../diffs_dicts/", device, lin_mod=linmod, parallel=False)
+    test_samples = np.load(test_data_path)
+    diffs_dict = single_gene_ablation(test_samples, model, ordered_feature_masks.keys(), ordered_feature_masks)
+    means_dict = get_unsigned_means(diffs_dict)
+    sorted_effects = sorted(means_dict.items(), key=lambda x:x[1], reverse=True)
+    print("--INDIVIDUAL EFFECTS--\n")
+    for key in sorted_effects.keys():
+        print("{}: {}".format(key,sorted_effects[key]))
+    pairs_dicts = pairwise_ablation(test_samples, ordered_feature_masks, ordered_feature_masks.keys(), diffs_dict, model, pairs_directory)
+    for gene in ordered_feature_masks.keys():
+        add_other_dict_keys(gene, pairs_directory)
 
 if __name__ == "__main__":
-    main()
+    main(ordered_feature_masks_file=sys.argv[1], model_file=sys.argv[2], test_data_path=sys.argv[3], pairs_directory=sys.argv[4])
