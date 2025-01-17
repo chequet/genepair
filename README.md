@@ -5,8 +5,8 @@ This repo presents a framework for detecting gene-gene interactions from trained
 ## Before Running
 - Clone this repository to your local machine
 - The file requirements.txt contains correct versions of all necessary packages to run this code. Run `pip install -r requirements.txt` from within the repo directory to install all required dependencies
-- It is expected that you have already cleaned and preprocessed genetic data to your requirements and trained a pytorch model on this data. The data is expected to be in numpy array format.
-- Create an ordered dictionary of genes or regions which will be used as interpretable features. The keys of the dictionary should be names or identifiers for the region and the values should be boolean masks where all loci not associated with this region have value zero and associated loci have value 1. This is expected to be saved as a pickle
+- It is expected that you have already cleaned and preprocessed genetic data to your requirements and trained a pytorch model on this data. The data is expected to be in numpy array format. An example torch model and some randomly generated example data is included in the repo for demonstration purposes
+- Create an ordered dictionary of genes or regions which will be used as interpretable features. The keys of the dictionary should be names or identifiers for the region and the values should be boolean masks where all loci not associated with this region have value zero and associated loci have value 1. This is expected to be saved as a pickle. An example feature mask to go with the randomly generated data is included in the repo
 
 ## Running instructions
 To execute the code, run 
