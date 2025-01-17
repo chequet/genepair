@@ -3,7 +3,6 @@ import pickle
 import torch
 import os
 import numpy as np
-import math
 
 use_cuda = torch.cuda.is_available()
 device = torch.device("cuda:0" if use_cuda else "cpu")
@@ -42,7 +41,7 @@ def one_gene_pairwise(data, ordered_feature_masks, start_gene, gene_set,
     gene_mask = ordered_feature_masks[start_gene]
     g = 1
     for gene in gene_set:
-        print("gene %i of %i" % (g, len(gene_set)), end='\r')
+        # print("gene %i of %i" % (g, len(gene_set)), end='\r')
         key = start_gene + "_" + gene
         mask = ordered_feature_masks[gene]
         joint_mask = torch.tensor(gene_mask * mask).to(device)
@@ -60,7 +59,7 @@ def one_gene_pairwise(data, ordered_feature_masks, start_gene, gene_set,
         pairs_dict[key] = np.mean(np.absolute(diff_diffs))
         g += 1
         if save_path:
-            pickle.dump(pairs_dict, open(os.path.join(save_path,gene,"_pairs.pkl"), "wb"))
+            pickle.dump(pairs_dict, open(os.path.join(save_path,gene+"_pairs.pkl"), "wb"))
     return pairs_dict
 
 def pairwise_ablation(data, ordered_feature_masks, gene_set,
@@ -69,12 +68,12 @@ def pairwise_ablation(data, ordered_feature_masks, gene_set,
     pairs_dicts = []
     searched_genes = set()
     for start_gene in gene_set:
-        print(start_gene)
-        searched_genes.add(start_gene)
+        # print(start_gene)
         comparison_set = [g for g in gene_set if g not in searched_genes]
         pd = one_gene_pairwise(data, ordered_feature_masks, start_gene, comparison_set, diffs_dict,
                           model, save_path)
         pairs_dicts.append(pd)
+        searched_genes.add(start_gene)
     return pairs_dicts
 
 def check_overlap(gene1, gene2, gene_feature_masks):
@@ -98,7 +97,7 @@ def check_second_degree_overlap(gene1, gene2, gene_feature_masks, comparison_set
 
 def add_other_dict_keys(search_gene, dict_directory):
     files = os.listdir(dict_directory)
-    og_path = dict_directory + search_gene + "_pairs_dict.pkl"
+    og_path = dict_directory + search_gene + "_pairs.pkl"
     og_dict = pickle.load(open(og_path, "rb"))
     for f in files:
         key = f.split("_")[0] + "_" + search_gene
@@ -112,13 +111,13 @@ def main(ordered_feature_masks_file, model_file, test_data_path, pairs_directory
     model = torch.load(model_file)
     model.to(device)
     print(model)
-    test_samples = np.load(test_data_path)
+    test_samples = torch.tensor(np.load(test_data_path),dtype=torch.float32)
     diffs_dict = single_gene_ablation(test_samples, model, ordered_feature_masks.keys(), ordered_feature_masks)
     means_dict = get_unsigned_means(diffs_dict)
     sorted_effects = sorted(means_dict.items(), key=lambda x:x[1], reverse=True)
-    print("--INDIVIDUAL EFFECTS--\n")
-    for key in sorted_effects.keys():
-        print("{}: {}".format(key,sorted_effects[key]))
+    print("\n--INDIVIDUAL EFFECTS--\n")
+    for effect in sorted_effects:
+        print("{}: {}".format(effect[0],effect[1]))
     pairs_dicts = pairwise_ablation(test_samples, ordered_feature_masks, ordered_feature_masks.keys(), diffs_dict, model, pairs_directory)
     for gene in ordered_feature_masks.keys():
         add_other_dict_keys(gene, pairs_directory)
